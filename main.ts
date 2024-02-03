@@ -15,20 +15,27 @@ import {
 import { HttpRequest, HttpResponse } from "@aws-sdk/protocol-http";
 import { HttpHandlerOptions } from "@aws-sdk/types";
 import { buildQueryString } from "@aws-sdk/querystring-builder";
-import { requestTimeout } from "@aws-sdk/fetch-http-handler/dist-es/request-timeout";
+import { requestTimeout } from "@smithy/fetch-http-handler/dist-es/request-timeout";
 
 import {
 	FetchHttpHandler,
 	FetchHttpHandlerOptions,
 } from "@smithy/fetch-http-handler";
+import imageCompression from "browser-image-compression";
 
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import * as crypto from "crypto";
+import { sha1 } from "crypto-hash";
 
 // Remember to rename these classes and interfaces!
 
 interface pasteFunction {
-	(this: HTMLElement, event: ClipboardEvent | DragEvent): void;
+	(this: HTMLElement, event: ClipboardEvent | DragEvent | Event): void;
+}
+
+enum CompressionMethod {
+	None = "none",
+	Local = "local",
+	TinyPng = "tinypng",
 }
 
 interface S3UploaderSettings {
@@ -50,6 +57,10 @@ interface S3UploaderSettings {
 	uploadAudio: boolean;
 	uploadPdf: boolean;
 	bypassCors: boolean;
+
+	// Custom Compression
+	compressionMethod: string;
+	tinyPngApiKey: string;
 }
 
 const DEFAULT_SETTINGS: S3UploaderSettings = {
@@ -71,6 +82,10 @@ const DEFAULT_SETTINGS: S3UploaderSettings = {
 	uploadAudio: false,
 	uploadPdf: false,
 	bypassCors: false,
+
+	// Custom Compression
+	compressionMethod: CompressionMethod.None,
+	tinyPngApiKey: "",
 };
 
 export default class S3UploaderPlugin extends Plugin {
@@ -101,7 +116,7 @@ export default class S3UploaderPlugin extends Plugin {
 	}
 
 	async pasteHandler(
-		ev: ClipboardEvent | DragEvent,
+		ev: ClipboardEvent | DragEvent | Event,
 		editor: Editor
 	): Promise<void> {
 		if (ev.defaultPrevented) {
@@ -147,6 +162,10 @@ export default class S3UploaderPlugin extends Plugin {
 					return;
 				}
 				file = (ev as DragEvent).dataTransfer?.files[0];
+				break;
+			case "input":
+				file = (ev.target as HTMLInputElement).files?.[0];
+				break;
 		}
 
 		const imageType = /image.*/;
@@ -171,10 +190,7 @@ export default class S3UploaderPlugin extends Plugin {
 
 			// set the placeholder text
 			const buf = await file.arrayBuffer();
-			const digest = crypto
-				.createHash("md5")
-				.update(new Uint8Array(buf))
-				.digest("hex");
+			const digest = await sha1(buf);
 			const contentType = file?.type;
 			const newFileName =
 				digest +
@@ -188,8 +204,10 @@ export default class S3UploaderPlugin extends Plugin {
 
 			const currentDate = new Date();
 			const year = currentDate.getFullYear();
-			const month = currentDate.getMonth() + 1; // JavaScript months are 0-11
-			const day = currentDate.getDate();
+			const month = (currentDate.getMonth() + 1)
+				.toString()
+				.padStart(2, "0"); // JavaScript months are 0-11
+			const day = currentDate.getDate().toString().padStart(2, "0"); // padding for single digit days
 
 			folder = folder.replace("${year}", year);
 			folder = folder.replace("${month}", month);
@@ -198,13 +216,78 @@ export default class S3UploaderPlugin extends Plugin {
 			const key = folder ? folder + "/" + newFileName : newFileName;
 
 			if (!localUpload) {
+				if (
+					this.settings.compressionMethod === CompressionMethod.Local
+				) {
+					file = await imageCompression(file, {
+						useWebWorker: false,
+					});
+				}
+
+				let fileBuffer = await file.arrayBuffer();
+
+				if (
+					this.settings.compressionMethod ===
+					CompressionMethod.TinyPng
+				) {
+					// Require TinyPNG API key
+					if (!this.settings.tinyPngApiKey) {
+						new Notice(
+							"TinyPNG API key is missing. Please add it to settings."
+						);
+						return;
+					}
+
+					const tinyPngApiKey = this.settings.tinyPngApiKey;
+					const tinyPngUrl = `https://api.tinify.com/shrink`;
+					const tinyPngHeaders = {
+						Authorization:
+							"Basic " + window.btoa("api:" + tinyPngApiKey),
+					};
+					const tinyPngResponse = await requestUrl({
+						url: tinyPngUrl,
+						method: "POST",
+						headers: tinyPngHeaders,
+						body: await file.arrayBuffer(),
+					});
+					if (tinyPngResponse.status !== 201) {
+						new Notice(
+							`Error uploading image to TinyPNG: ${tinyPngResponse.status}`
+						);
+						return;
+					}
+					const tinyPngOutputUrl =
+						tinyPngResponse.headers.location ||
+						tinyPngResponse.headers.Location;
+					if (
+						!tinyPngOutputUrl ||
+						tinyPngOutputUrl === "" ||
+						tinyPngOutputUrl.length === 0
+					) {
+						new Notice(
+							`Error uploading image to TinyPNG: No output URL`
+						);
+						return;
+					}
+					const tinyPngOutputResponse = await requestUrl(
+						tinyPngOutputUrl
+					);
+					if (tinyPngOutputResponse.status !== 200) {
+						new Notice(
+							`Error uploading image to TinyPNG: ${tinyPngOutputResponse.status}`
+						);
+						return;
+					}
+					fileBuffer = tinyPngOutputResponse.arrayBuffer;
+				}
+
 				// Use S3
 				this.s3
 					.send(
 						new PutObjectCommand({
 							Bucket: this.settings.bucket,
 							Key: key,
-							Body: new Uint8Array(await file.arrayBuffer()),
+							Body: new Uint8Array(fileBuffer),
 							ContentType: contentType ? contentType : undefined,
 						})
 					)
@@ -295,7 +378,7 @@ export default class S3UploaderPlugin extends Plugin {
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new S3UploaderSettingTab(this.app, this));
 
-		let apiEndpoint = this.settings.useCustomEndpoint
+		const apiEndpoint = this.settings.useCustomEndpoint
 			? this.settings.customEndpoint
 			: `https://s3.${this.settings.region}.amazonaws.com/`;
 		this.settings.imageUrlPath = this.settings.useCustomImageUrl
@@ -308,7 +391,6 @@ export default class S3UploaderPlugin extends Plugin {
 			this.s3 = new S3Client({
 				region: this.settings.region,
 				credentials: {
-					clientConfig: {region: this.settings.region},
 					accessKeyId: this.settings.accessKey,
 					secretAccessKey: this.settings.secretKey,
 				},
@@ -320,7 +402,6 @@ export default class S3UploaderPlugin extends Plugin {
 			this.s3 = new S3Client({
 				region: this.settings.region,
 				credentials: {
-					clientConfig: {region: this.settings.region},
 					accessKeyId: this.settings.accessKey,
 					secretAccessKey: this.settings.secretKey,
 				},
@@ -329,6 +410,28 @@ export default class S3UploaderPlugin extends Plugin {
 				requestHandler: new ObsHttpHandler({ keepAlive: false }),
 			});
 		}
+
+		this.addCommand({
+			id: "upload-image",
+			name: "Upload image",
+			icon: "image-plus",
+			mobileOnly: false,
+			editorCallback: (editor) => {
+				const input = document.createElement("input");
+
+				input.type = "file";
+
+				input.oninput = (event) => {
+					if (!event.target) return;
+					this.pasteHandler(event, editor);
+				};
+
+				input.click();
+
+				// delete element
+				input.remove();
+			},
+		});
 
 		this.pasteFunction = this.pasteHandler.bind(this);
 
@@ -561,7 +664,7 @@ class S3UploaderSettingTab extends PluginSettingTab {
 						value = value.match(/https?:\/\//) // Force to start http(s)://
 							? value
 							: "https://" + value;
-						value = value.replace(/([^\/])$/, "$1/"); // Force to end with slash
+						value = value.replace(/([^/])$/, "$1/"); // Force to end with slash
 						this.plugin.settings.customEndpoint = value.trim();
 						await this.plugin.saveSettings();
 					})
@@ -605,7 +708,7 @@ class S3UploaderSettingTab extends PluginSettingTab {
 						value = value.match(/https?:\/\//) // Force to start http(s)://
 							? value
 							: "https://" + value;
-						value = value.replace(/([^\/])$/, "$1/"); // Force to end with slash
+						value = value.replace(/([^/])$/, "$1/"); // Force to end with slash
 						this.plugin.settings.customImageUrl = value.trim();
 						await this.plugin.saveSettings();
 					})
@@ -621,6 +724,36 @@ class S3UploaderSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.bypassCors)
 					.onChange(async (value) => {
 						this.plugin.settings.bypassCors = value;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("Compression Method")
+			.setDesc("Select the method for image compression.")
+			.addDropdown((dropdown) => {
+				// Add options from the CompressionMethod enum
+				Object.values(CompressionMethod).forEach((method) => {
+					dropdown.addOption(method, method);
+				});
+
+				dropdown
+					.setValue(this.plugin.settings.compressionMethod)
+					.onChange(async (value: string) => {
+						this.plugin.settings.compressionMethod = value;
+						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("TinyPNG API Key")
+			.setDesc("API key for TinyPNG compression service.")
+			.addText((text) => {
+				wrapTextWithPasswordHide(text);
+				text.setPlaceholder("API Key")
+					.setValue(this.plugin.settings.tinyPngApiKey)
+					.onChange(async (value) => {
+						this.plugin.settings.tinyPngApiKey = value.trim();
 						await this.plugin.saveSettings();
 					});
 			});
@@ -733,6 +866,7 @@ class ObsHttpHandler extends FetchHttpHandler {
 			contentType = transformedHeaders["content-type"];
 		}
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		let transformedBody: any = body;
 		if (ArrayBuffer.isView(body)) {
 			transformedBody = bufferToArrayBuffer(body);
