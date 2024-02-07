@@ -2,7 +2,6 @@ import QRCode from "qrcode";
 import manifest from "./manifest.json";
 import { S3UploaderSettings } from "./main";
 import { Modal, App, Notice } from "obsidian";
-import CryptoJS from "crypto-js";
 
 export interface UriParams {
 	func?: string;
@@ -11,24 +10,13 @@ export interface UriParams {
 	data?: string;
 }
 
-const ENCRYPT_KEY = "DKH24E4Xr8AfcZz24n6BCyew6f63"
-
-const encryptBrowser = (text: string, key: string) => {
-	return CryptoJS.AES.encrypt(text, key).toString();
-};
-
-const decryptBrowser = (encrypted: string, key: string) => {
-	const bytes = CryptoJS.AES.decrypt(encrypted, key);
-	return bytes.toString(CryptoJS.enc.Utf8);
-};
-
 export const exportQrCodeUri = async (
 	settings: S3UploaderSettings,
 	currentVaultName: string
 ) => {
 	const vault = encodeURIComponent(currentVaultName);
-  const data = encodeURIComponent(encryptBrowser(JSON.stringify(settings), ENCRYPT_KEY));
-	const rawUri = `obsidian://${manifest.id}?func=imports3uploader&version=${manifest.version}&vault=${vault}&data=${data}`;
+  const data = encodeURIComponent(JSON.stringify(settings));
+	const rawUri = `obsidian://${manifest.id}?func=import&version=${manifest.version}&vault=${vault}&data=${data}`;
 	const imgUri = await QRCode.toDataURL(rawUri);
 	return {
 		rawUri,
@@ -49,7 +37,7 @@ export const importQrCodeUri = (
 	const params = inputParams as UriParams;
 	if (
 		params.func === undefined ||
-		params.func !== "imports3uploader" ||
+		params.func !== "import" ||
 		params.vault === undefined ||
 		params.data === undefined
 	) {
@@ -74,7 +62,7 @@ export const importQrCodeUri = (
 
 	let settings = {} as S3UploaderSettings;
 	try {
-		settings = JSON.parse(decryptBrowser(decodeURIComponent(params.data), ENCRYPT_KEY));
+		settings = JSON.parse(decodeURIComponent(params.data));
 	} catch (e) {
 		return {
 			status: "error",

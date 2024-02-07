@@ -26,7 +26,6 @@ import imageCompression from "browser-image-compression";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { sha1 } from "crypto-hash";
 import { ExportSettingsQrCodeModal, importQrCodeUri } from "export-import";
-import { clone } from "rambda";
 
 // Remember to rename these classes and interfaces!
 
@@ -445,8 +444,7 @@ export default class S3UploaderPlugin extends Plugin {
 				if (parsed.status === "error") {
 					new Notice(parsed.message);
 				} else {
-					const copied = clone(parsed.result);
-					this.settings = Object.assign({}, this.settings, copied);
+					this.settings = Object.assign({}, this.settings, parsed.result);
 					this.saveSettings();
 					new Notice(
 						"Settings imported. Please check the settings tab to verify."
