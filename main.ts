@@ -16,7 +16,6 @@ import { HttpRequest, HttpResponse } from "@aws-sdk/protocol-http";
 import { HttpHandlerOptions } from "@aws-sdk/types";
 import { buildQueryString } from "@aws-sdk/querystring-builder";
 import { requestTimeout } from "@smithy/fetch-http-handler/dist-es/request-timeout";
-import manifest from "./manifest.json";
 import {
 	FetchHttpHandler,
 	FetchHttpHandlerOptions,
@@ -25,7 +24,7 @@ import imageCompression from "browser-image-compression";
 
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { sha1 } from "crypto-hash";
-import { ExportSettingsQrCodeModal, importQrCodeUri } from "export-import";
+import { ImportSettingsModal, exportDataUri } from "export-import";
 
 // Remember to rename these classes and interfaces!
 
@@ -434,25 +433,6 @@ export default class S3UploaderPlugin extends Plugin {
 			},
 		});
 
-		this.registerObsidianProtocolHandler(
-			manifest.id,
-			async (inputParams) => {
-				const parsed = importQrCodeUri(
-					inputParams,
-					this.app.vault.getName()
-				);
-				if (parsed.status === "error") {
-					new Notice(parsed.message);
-				} else {
-					this.settings = Object.assign({}, this.settings, parsed.result);
-					this.saveSettings();
-					new Notice(
-						"Settings imported. Please check the settings tab to verify."
-					);
-				}
-			}
-		);
-
 		this.pasteFunction = this.pasteHandler.bind(this);
 
 		this.registerEvent(
@@ -485,13 +465,7 @@ class S3UploaderSettingTab extends PluginSettingTab {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
-
-	private static createFragmentWithHTML = (html: string) =>
-		createFragment((documentFragment) => {
-			const div = documentFragment.createDiv();
-			div.innerHTML = html;
-		});
-
+	
 	display(): void {
 		const { containerEl } = this;
 
@@ -770,13 +744,23 @@ class S3UploaderSettingTab extends PluginSettingTab {
 					});
 			});
 
-		// Add a new button
 		new Setting(containerEl)
 			.setName("Export settings")
-			.setDesc("Export settings as a QR code.")
+			.setDesc("Export settings from string.")
 			.addButton((button) => {
-				button.setButtonText("Export").onClick(async () => {
-					new ExportSettingsQrCodeModal(this.app, this.plugin.settings).open();
+				button.setButtonText("Copy to Clipboard").onClick(async () => {
+					const dataUri = exportDataUri(this.plugin.settings);
+					navigator.clipboard.writeText(dataUri);
+					new Notice("Settings copied to clipboard");
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Import settings")
+			.setDesc("Import settings from string.")
+			.addButton((button) => {
+				button.setButtonText("Import").onClick(async () => {
+					new ImportSettingsModal(this.app, this.plugin).open();
 				});
 			});
 	}

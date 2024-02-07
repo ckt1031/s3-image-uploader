@@ -1,27 +1,9 @@
-import QRCode from "qrcode";
-import manifest from "./manifest.json";
-import { S3UploaderSettings } from "./main";
-import { Modal, App, Notice } from "obsidian";
+import S3UploaderPlugin, { S3UploaderSettings } from "./main";
+import { Modal, App, Notice, Setting, TextComponent } from "obsidian";
 
-export interface UriParams {
-	func?: string;
-	vault?: string;
-	ver?: string;
-	data?: string;
-}
-
-export const exportQrCodeUri = async (
-	settings: S3UploaderSettings,
-	currentVaultName: string
-) => {
-	const vault = encodeURIComponent(currentVaultName);
-  const data = encodeURIComponent(JSON.stringify(settings));
-	const rawUri = `obsidian://${manifest.id}?func=import&version=${manifest.version}&vault=${vault}&data=${data}`;
-	const imgUri = await QRCode.toDataURL(rawUri);
-	return {
-		rawUri,
-		imgUri,
-	};
+export const exportDataUri = (settings: S3UploaderSettings) => {
+	const data = encodeURIComponent(JSON.stringify(settings));
+	return data;
 };
 
 export interface ProcessQrCodeResultType {
@@ -30,39 +12,15 @@ export interface ProcessQrCodeResultType {
 	result?: S3UploaderSettings;
 }
 
-export const importQrCodeUri = (
-	inputParams: unknown,
-	currentVaultName: string
+export const importFromDataUri = (
+	plugin: S3UploaderPlugin,
+	inputParams: string
 ): ProcessQrCodeResultType => {
-	const params = inputParams as UriParams;
-	if (
-		params.func === undefined ||
-		params.func !== "import" ||
-		params.vault === undefined ||
-		params.data === undefined
-	) {
-		return {
-			status: "error",
-			message: `The uri is not for exporting/importing settings: ${JSON.stringify(
-				inputParams
-			)}`,
-		};
-	}
-
-	if (params.vault !== currentVaultName) {
-		return {
-			status: "error",
-			message: `The target vault is ${
-				params.vault
-			} but you are currently in ${currentVaultName}: ${JSON.stringify(
-				inputParams
-			)}`,
-		};
-	}
-
 	let settings = {} as S3UploaderSettings;
 	try {
-		settings = JSON.parse(decodeURIComponent(params.data));
+		settings = JSON.parse(decodeURIComponent(inputParams));
+		plugin.settings = Object.assign({}, plugin.settings, settings);
+		plugin.saveSettings();
 	} catch (e) {
 		return {
 			status: "error",
@@ -78,52 +36,55 @@ export const importQrCodeUri = (
 	};
 };
 
-export class ExportSettingsQrCodeModal extends Modal {
-	plugin: S3UploaderSettings;
+export class ImportSettingsModal extends Modal {
+	data: string;
+	plugin: S3UploaderPlugin;
 
-	constructor(app: App, plugin: S3UploaderSettings) {
+	constructor(app: App, plugin: S3UploaderPlugin) {
 		super(app);
 		this.plugin = plugin;
+		this.data = "";
 	}
 
 	async onOpen() {
-		const { contentEl } = this;
-
-		const { rawUri, imgUri } = await exportQrCodeUri(
-			this.plugin,
-			this.app.vault.getName()
-		);
+		const { contentEl, data } = this;
 
 		const div1 = contentEl.createDiv();
 
 		div1.createEl("p", {
-			text: "Scan the QR code with your mobile device to import the settings",
+			text: "Paste the settings data here:",
 		});
 
-		const div2 = contentEl.createDiv();
-		div2.createEl(
-			"button",
-			{
-				text: "Copy URI",
-			},
-			(el) => {
-				el.onclick = async () => {
-					await navigator.clipboard.writeText(rawUri);
-					new Notice("URI copied to clipboard");
-				};
-			}
-		);
+		new Setting(contentEl)
+			.setName("String:")
+			.addText((text: TextComponent) => {
+				text.setPlaceholder("Name (example: text-tone-helper)");
+				text.onChange((value: string) => {
+					this.data = value;
+				});
+				text.setValue(data);
+			});
 
-		const div3 = contentEl.createDiv();
-		div3.createEl(
-			"img",
-			{
-				cls: "qrcode-img",
-			},
-			async (el) => {
-				el.src = imgUri;
-			}
+		new Setting(contentEl).addButton((btn) =>
+			btn
+				.setButtonText("Confirm")
+				.setCta()
+				.onClick(async () => {
+					await this.submitForm();
+				})
 		);
+	}
+
+	async submitForm() {
+		const { data } = this;
+		const result = importFromDataUri(this.plugin, data);
+		if (result.status === "ok") {
+			new Notice("Settings imported successfully");
+			this.close();
+		} else {
+			new Notice(result.message);
+		}
+		this.close();
 	}
 
 	onClose() {
