@@ -16,7 +16,7 @@ import { HttpRequest, HttpResponse } from "@aws-sdk/protocol-http";
 import { HttpHandlerOptions } from "@aws-sdk/types";
 import { buildQueryString } from "@aws-sdk/querystring-builder";
 import { requestTimeout } from "@smithy/fetch-http-handler/dist-es/request-timeout";
-
+import manifest from "./manifest.json";
 import {
 	FetchHttpHandler,
 	FetchHttpHandlerOptions,
@@ -25,6 +25,8 @@ import imageCompression from "browser-image-compression";
 
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { sha1 } from "crypto-hash";
+import { ExportSettingsQrCodeModal, importQrCodeUri } from "export-import";
+import { clone } from "rambda";
 
 // Remember to rename these classes and interfaces!
 
@@ -38,7 +40,7 @@ enum CompressionMethod {
 	TinyPng = "tinypng",
 }
 
-interface S3UploaderSettings {
+export interface S3UploaderSettings {
 	accessKey: string;
 	secretKey: string;
 	region: string;
@@ -433,6 +435,26 @@ export default class S3UploaderPlugin extends Plugin {
 			},
 		});
 
+		this.registerObsidianProtocolHandler(
+			manifest.id,
+			async (inputParams) => {
+				const parsed = importQrCodeUri(
+					inputParams,
+					this.app.vault.getName()
+				);
+				if (parsed.status === "error") {
+					new Notice(parsed.message);
+				} else {
+					const copied = clone(parsed.result);
+					this.settings = Object.assign({}, this.settings, copied);
+					this.saveSettings();
+					new Notice(
+						"Settings imported. Please check the settings tab to verify."
+					);
+				}
+			}
+		);
+
 		this.pasteFunction = this.pasteHandler.bind(this);
 
 		this.registerEvent(
@@ -466,26 +488,18 @@ class S3UploaderSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	private static createFragmentWithHTML = (html: string) =>
+		createFragment((documentFragment) => {
+			const div = documentFragment.createDiv();
+			div.innerHTML = html;
+		});
+
 	display(): void {
 		const { containerEl } = this;
 
 		containerEl.empty();
 
 		containerEl.createEl("h2", { text: "Settings for S3 Image Uploader" });
-
-		containerEl.createEl("br");
-
-		const coffeeDiv = containerEl.createDiv("coffee");
-		const coffeeLink = coffeeDiv.createEl("a", {
-			href: "https://www.buymeacoffee.com/jvsteiner",
-		});
-		const coffeeImg = coffeeLink.createEl("img", {
-			attr: {
-				src: "https://cdn.buymeacoffee.com/buttons/v2/default-blue.png",
-			},
-		});
-		coffeeImg.height = 45;
-		containerEl.createEl("br");
 
 		new Setting(containerEl)
 			.setName("AWS Access Key ID")
@@ -756,6 +770,16 @@ class S3UploaderSettingTab extends PluginSettingTab {
 						this.plugin.settings.tinyPngApiKey = value.trim();
 						await this.plugin.saveSettings();
 					});
+			});
+
+		// Add a new button
+		new Setting(containerEl)
+			.setName("Export settings")
+			.setDesc("Export settings as a QR code.")
+			.addButton((button) => {
+				button.setButtonText("Export").onClick(async () => {
+					new ExportSettingsQrCodeModal(this.app, this.plugin.settings).open();
+				});
 			});
 	}
 }

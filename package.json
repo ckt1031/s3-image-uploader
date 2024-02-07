@@ -12,10 +12,12 @@
   "author": "jvsteiner@gmail.com",
   "license": "MIT",
   "devDependencies": {
+    "@types/crypto-js": "^4.2.2",
     "@types/mime-types": "^2.1.4",
     "@types/node": "^20.11.16",
-    "@typescript-eslint/eslint-plugin": "6.20.0",
-    "@typescript-eslint/parser": "6.20.0",
+    "@types/qrcode": "^1.5.5",
+    "@typescript-eslint/eslint-plugin": "6.21.0",
+    "@typescript-eslint/parser": "6.21.0",
     "browser-resolve": "^2.0.0",
     "builtin-modules": "3.3.0",
     "detective": "^5.2.1",
@@ -26,12 +28,15 @@
     "typescript": "5.3.3"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.504.0",
+    "@aws-sdk/client-s3": "3.507.0",
     "@aws-sdk/protocol-http": "^3.374.0",
     "@aws-sdk/querystring-builder": "^3.374.0",
     "@aws-sdk/types": "^3.502.0",
     "@smithy/fetch-http-handler": "^2.4.1",
     "browser-image-compression": "^2.0.2",
-    "crypto-hash": "^3.0.0"
+    "crypto-hash": "^3.0.0",
+    "crypto-js": "^4.2.0",
+    "qrcode": "^1.5.3",
+    "rambda": "^9.0.1"
   }
 }
