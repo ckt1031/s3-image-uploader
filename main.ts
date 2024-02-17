@@ -20,6 +20,7 @@ import {
 	FetchHttpHandler,
 	FetchHttpHandlerOptions,
 } from "@smithy/fetch-http-handler";
+import { filesize } from "filesize";
 import imageCompression from "browser-image-compression";
 
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
@@ -226,6 +227,8 @@ export default class S3UploaderPlugin extends Plugin {
 
 				let fileBuffer = await file.arrayBuffer();
 
+				const originalSize = fileBuffer.byteLength;
+
 				if (
 					this.settings.compressionMethod ===
 					CompressionMethod.TinyPng
@@ -279,6 +282,14 @@ export default class S3UploaderPlugin extends Plugin {
 						return;
 					}
 					fileBuffer = tinyPngOutputResponse.arrayBuffer;
+
+					const newSize = fileBuffer.byteLength;
+
+					new Notice(
+						`Image compressed from ${filesize(
+							originalSize
+						)} to ${filesize(newSize)}`
+					);
 				}
 
 				// Use S3
@@ -465,7 +476,7 @@ class S3UploaderSettingTab extends PluginSettingTab {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
-	
+
 	display(): void {
 		const { containerEl } = this;
 
