@@ -116,6 +116,73 @@ export default class S3UploaderPlugin extends Plugin {
 		}
 	}
 
+	async compressImage(file: File): Promise<ArrayBuffer> {
+		if (this.settings.compressionMethod === CompressionMethod.Local) {
+			file = await imageCompression(file, {
+				useWebWorker: false,
+			});
+		}
+
+		let fileBuffer = await file.arrayBuffer();
+
+		const originalSize = fileBuffer.byteLength;
+
+		if (this.settings.compressionMethod === CompressionMethod.TinyPng) {
+			// Require TinyPNG API key
+			if (!this.settings.tinyPngApiKey) {
+				throw new Error(
+					"TinyPNG API key is required for TinyPNG compression"
+				);
+			}
+
+			const tinyPngApiKey = this.settings.tinyPngApiKey;
+			const tinyPngUrl = `https://api.tinify.com/shrink`;
+			const tinyPngHeaders = {
+				Authorization: "Basic " + window.btoa("api:" + tinyPngApiKey),
+			};
+			const tinyPngResponse = await requestUrl({
+				url: tinyPngUrl,
+				method: "POST",
+				headers: tinyPngHeaders,
+				body: await file.arrayBuffer(),
+			});
+			if (tinyPngResponse.status !== 201) {
+				throw new Error(
+					`Error uploading image to TinyPNG: ${tinyPngResponse.status}`
+				);
+			}
+			const tinyPngOutputUrl =
+				tinyPngResponse.headers.location ||
+				tinyPngResponse.headers.Location;
+			if (
+				!tinyPngOutputUrl ||
+				tinyPngOutputUrl === "" ||
+				tinyPngOutputUrl.length === 0
+			) {
+				throw new Error(
+					`Error uploading image to TinyPNG: No output URL`
+				);
+			}
+			const tinyPngOutputResponse = await requestUrl(tinyPngOutputUrl);
+			if (tinyPngOutputResponse.status !== 200) {
+				throw new Error(
+					`Error uploading image to TinyPNG: ${tinyPngOutputResponse.status}`
+				);
+			}
+			fileBuffer = tinyPngOutputResponse.arrayBuffer;
+
+			const newSize = fileBuffer.byteLength;
+
+			new Notice(
+				`Image compressed from ${filesize(originalSize)} to ${filesize(
+					newSize
+				)}`
+			);
+		}
+
+		return fileBuffer;
+	}
+
 	async pasteHandler(
 		ev: ClipboardEvent | DragEvent | Event,
 		editor: Editor
@@ -125,261 +192,113 @@ export default class S3UploaderPlugin extends Plugin {
 		}
 
 		const noteFile = this.app.workspace.getActiveFile();
-
 		if (!noteFile || !noteFile.name) return;
 
-		// Handle frontmatter settings
 		const fm = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
-		const fmUploadOnDrag = fm && fm.uploadOnDrag;
-		const fmLocalUpload = fm && fm.localUpload;
-		const fmUploadFolder = fm ? fm.localUploadFolder : null;
-		const fmUploadVideo = fm && fm.uploadVideo;
-		const fmUploadAudio = fm && fm.uploadAudio;
-		const fmUploadPdf = fm && fm.uploadPdf;
+		const localUpload = fm?.localUpload ?? this.settings.localUpload;
+		const uploadVideo = fm?.uploadVideo ?? this.settings.uploadVideo;
+		const uploadAudio = fm?.uploadAudio ?? this.settings.uploadAudio;
+		const uploadPdf = fm?.uploadPdf ?? this.settings.uploadPdf;
 
-		const localUpload = fmLocalUpload
-			? fmLocalUpload
-			: this.settings.localUpload;
-
-		const uploadVideo = fmUploadVideo
-			? fmUploadVideo
-			: this.settings.uploadVideo;
-
-		const uploadAudio = fmUploadAudio
-			? fmUploadAudio
-			: this.settings.uploadAudio;
-
-		const uploadPdf = fmUploadPdf ? fmUploadPdf : this.settings.uploadPdf;
-
-		let file = null;
-
-		// figure out what kind of event we're handling
+		let files: File[] = [];
 		switch (ev.type) {
 			case "paste":
-				file = (ev as ClipboardEvent).clipboardData?.files[0];
+				files = Array.from(
+					(ev as ClipboardEvent).clipboardData?.files || []
+				);
 				break;
 			case "drop":
-				if (!this.settings.uploadOnDrag && !fmUploadOnDrag) {
+				if (!this.settings.uploadOnDrag && !(fm && fm.uploadOnDrag)) {
 					return;
 				}
-				file = (ev as DragEvent).dataTransfer?.files[0];
+				files = Array.from((ev as DragEvent).dataTransfer?.files || []);
 				break;
 			case "input":
-				file = (ev.target as HTMLInputElement).files?.[0];
+				files = Array.from((ev.target as HTMLInputElement).files || []);
 				break;
 		}
 
-		const imageType = /image.*/;
-		const videoType = /video.*/;
-		const audioType = /audio.*/;
-		const pdfType = /application\/pdf/;
-
-		let thisType = "";
-
-		if (file?.type.match(videoType) && uploadVideo) {
-			thisType = "video";
-		} else if (file?.type.match(audioType) && uploadAudio) {
-			thisType = "audio";
-		} else if (file?.type.match(pdfType) && uploadPdf) {
-			thisType = "pdf";
-		} else if (file?.type.match(imageType)) {
-			thisType = "image";
-		}
-
-		if (thisType && file) {
+		if (files.length > 0) {
 			ev.preventDefault();
 
-			// set the placeholder text
-			const buf = await file.arrayBuffer();
-			const digest = await sha1(buf);
-			const contentType = file?.type;
-			const newFileName =
-				digest +
-				"." +
-				file.name.slice(((file?.name.lastIndexOf(".") - 1) >>> 0) + 2);
-			const pastePlaceText = `![uploading...](${newFileName})\n`;
-			editor.replaceSelection(pastePlaceText);
-
-			// upload the image
-			let folder = fmUploadFolder ? fmUploadFolder : this.settings.folder;
-
-			const currentDate = new Date();
-			const year = currentDate.getFullYear();
-			const month = (currentDate.getMonth() + 1)
-				.toString()
-				.padStart(2, "0"); // JavaScript months are 0-11
-			const day = currentDate.getDate().toString().padStart(2, "0"); // padding for single digit days
-
-			folder = folder.replace("${year}", year);
-			folder = folder.replace("${month}", month);
-			folder = folder.replace("${day}", day);
-
-			const key = folder ? folder + "/" + newFileName : newFileName;
-
-			if (!localUpload) {
-				if (
-					this.settings.compressionMethod === CompressionMethod.Local
-				) {
-					file = await imageCompression(file, {
-						useWebWorker: false,
-					});
+			const uploads = files.map(async (file) => {
+				let thisType = "";
+				if (file.type.match(/video.*/) && uploadVideo) {
+					thisType = "video";
+				} else if (file.type.match(/audio.*/) && uploadAudio) {
+					thisType = "audio";
+				} else if (file.type.match(/application\/pdf/) && uploadPdf) {
+					thisType = "pdf";
+				} else if (file.type.match(/image.*/)) {
+					thisType = "image";
 				}
 
-				let fileBuffer = await file.arrayBuffer();
+				if (!thisType) return;
 
-				const originalSize = fileBuffer.byteLength;
+				const buf = await file.arrayBuffer();
+				const digest = await sha1(buf);
+				const newFileName = `${digest}.${file.name.split(".").pop()}`;
+				const placeholder = `![uploading...](${newFileName})\n`;
+				editor.replaceSelection(placeholder);
 
-				if (
-					this.settings.compressionMethod ===
-					CompressionMethod.TinyPng
-				) {
-					// Require TinyPNG API key
-					if (!this.settings.tinyPngApiKey) {
-						new Notice(
-							"TinyPNG API key is missing. Please add it to settings."
-						);
-						return;
-					}
-
-					const tinyPngApiKey = this.settings.tinyPngApiKey;
-					const tinyPngUrl = `https://api.tinify.com/shrink`;
-					const tinyPngHeaders = {
-						Authorization:
-							"Basic " + window.btoa("api:" + tinyPngApiKey),
-					};
-					const tinyPngResponse = await requestUrl({
-						url: tinyPngUrl,
-						method: "POST",
-						headers: tinyPngHeaders,
-						body: await file.arrayBuffer(),
-					});
-					if (tinyPngResponse.status !== 201) {
-						new Notice(
-							`Error uploading image to TinyPNG: ${tinyPngResponse.status}`
-						);
-						return;
-					}
-					const tinyPngOutputUrl =
-						tinyPngResponse.headers.location ||
-						tinyPngResponse.headers.Location;
-					if (
-						!tinyPngOutputUrl ||
-						tinyPngOutputUrl === "" ||
-						tinyPngOutputUrl.length === 0
-					) {
-						new Notice(
-							`Error uploading image to TinyPNG: No output URL`
-						);
-						return;
-					}
-					const tinyPngOutputResponse = await requestUrl(
-						tinyPngOutputUrl
-					);
-					if (tinyPngOutputResponse.status !== 200) {
-						new Notice(
-							`Error uploading image to TinyPNG: ${tinyPngOutputResponse.status}`
-						);
-						return;
-					}
-					fileBuffer = tinyPngOutputResponse.arrayBuffer;
-
-					const newSize = fileBuffer.byteLength;
-
-					new Notice(
-						`Image compressed from ${filesize(
-							originalSize
-						)} to ${filesize(newSize)}`
-					);
-				}
-
-				// Use S3
-				this.s3
-					.send(
-						new PutObjectCommand({
-							Bucket: this.settings.bucket,
-							Key: key,
-							Body: new Uint8Array(fileBuffer),
-							ContentType: contentType ? contentType : undefined,
-						})
+				let folder = fm?.folder ?? this.settings.folder;
+				const currentDate = new Date();
+				folder = folder
+					.replace("${year}", currentDate.getFullYear().toString())
+					.replace(
+						"${month}",
+						String(currentDate.getMonth() + 1).padStart(2, "0")
 					)
-					.then((res) => {
-						const url = this.settings.imageUrlPath + key;
+					.replace(
+						"${day}",
+						String(currentDate.getDate()).padStart(2, "0")
+					);
+				const key = folder ? `${folder}/${newFileName}` : newFileName;
 
-						let imgMarkdownText = "";
-						try {
-							imgMarkdownText = wrapFileDependingOnType(
-								url,
-								thisType,
-								""
-							);
-						} catch (error) {
-							this.replaceText(editor, pastePlaceText, "");
-							throw error;
-						}
+				try {
+					let url;
 
-						this.replaceText(
-							editor,
-							pastePlaceText,
-							imgMarkdownText
-						);
-						new Notice(
-							`Image uploaded to S3 bucket: ${this.settings.bucket}`
-						);
-					})
-					.catch((err) => {
-						console.error(err);
-						new Notice(
-							`Error uploading image to S3 bucket ${this.settings.bucket}: ` +
-								err.message
-						);
-					});
-			} else {
-				// Use local upload
-				const localUploadFolder = fmUploadFolder
-					? fmUploadFolder
-					: this.settings.localUploadFolder;
-				const localUploadPath = localUploadFolder
-					? localUploadFolder + "/" + newFileName
-					: newFileName;
-				await this.app.vault.adapter.mkdir(localUploadFolder);
-				this.app.vault.adapter
-					.writeBinary(localUploadPath, buf)
-					.then(() => {
-						let basePath = "";
-						const adapter = this.app.vault.adapter;
-						if (adapter instanceof FileSystemAdapter) {
-							basePath = adapter.getBasePath();
-						}
+					const newBuff = await this.compressImage(file);
 
-						let imgMarkdownText = "";
+					if (!localUpload) {
+						await this.s3.send(
+							new PutObjectCommand({
+								Bucket: this.settings.bucket,
+								Key: key,
+								Body: new Uint8Array(newBuff),
+								ContentType: file.type,
+							})
+						);
+						url = this.settings.imageUrlPath + key;
+					} else {
+						await this.app.vault.adapter.writeBinary(
+							key,
+							new Uint8Array(newBuff)
+						);
+						url =
+							this.app.vault.adapter instanceof FileSystemAdapter
+								? this.app.vault.adapter.getFullPath(key)
+								: key;
+					}
+					const imgMarkdownText = wrapFileDependingOnType(
+						url,
+						thisType,
+						""
+					);
+					this.replaceText(editor, placeholder, imgMarkdownText);
+				} catch (error) {
+					console.error(error);
+					this.replaceText(
+						editor,
+						placeholder,
+						`Error uploading file: ${error.message}\n`
+					);
+				}
+			});
 
-						try {
-							imgMarkdownText = wrapFileDependingOnType(
-								localUploadPath,
-								thisType,
-								basePath
-							);
-						} catch (error) {
-							this.replaceText(editor, pastePlaceText, "");
-							throw error;
-						}
-						this.replaceText(
-							editor,
-							pastePlaceText,
-							imgMarkdownText
-						);
-						new Notice(
-							`Image uploaded to ${localUploadFolder} folder`
-						);
-					})
-					.catch((err) => {
-						console.log(err);
-						new Notice(
-							`Error uploading image to ${localUploadFolder} folder: ` +
-								err.message
-						);
-					});
-			}
+			await Promise.all(uploads).then(() => {
+				new Notice("All files processed.");
+			});
 		}
 	}
 
@@ -402,6 +321,7 @@ export default class S3UploaderPlugin extends Plugin {
 			this.s3 = new S3Client({
 				region: this.settings.region,
 				credentials: {
+					// clientConfig: { region: this.settings.region },
 					accessKeyId: this.settings.accessKey,
 					secretAccessKey: this.settings.secretKey,
 				},
@@ -413,6 +333,7 @@ export default class S3UploaderPlugin extends Plugin {
 			this.s3 = new S3Client({
 				region: this.settings.region,
 				credentials: {
+					// clientConfig: { region: this.settings.region },
 					accessKeyId: this.settings.accessKey,
 					secretAccessKey: this.settings.secretKey,
 				},
@@ -820,7 +741,7 @@ const wrapFileDependingOnType = (
 			throw new Error("PDFs cannot be embedded in local mode");
 		}
 		return `<iframe frameborder=0 border=0 width=100% height=800
-	src="https://docs.google.com/viewer?url=${location}?raw=true">
+	src="https://docs.google.com/viewer?embedded=true&url=${location}?raw=true">
 </iframe>`;
 	} else {
 		throw new Error("Unknown file type");
