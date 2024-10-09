@@ -13,28 +13,28 @@
   "license": "MIT",
   "devDependencies": {
     "@types/mime-types": "^2.1.4",
-    "@types/node": "^20.12.12",
+    "@types/node": "^22.7.5",
     "@types/qrcode": "^1.5.5",
-    "@typescript-eslint/eslint-plugin": "7.10.0",
-    "@typescript-eslint/parser": "7.10.0",
+    "@typescript-eslint/eslint-plugin": "8.8.1",
+    "@typescript-eslint/parser": "8.8.1",
     "browser-resolve": "^2.0.0",
     "builtin-modules": "4.0.0",
     "detective": "^5.2.1",
-    "esbuild": "0.21.4",
-    "obsidian": "1.5.7",
+    "esbuild": "0.24.0",
+    "obsidian": "1.7.2",
     "process": "^0.11.10",
-    "tslib": "2.6.2",
-    "typescript": "5.4.5"
+    "tslib": "2.7.0",
+    "typescript": "5.6.3"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "3.583.0",
+    "@aws-sdk/client-s3": "3.667.0",
     "@aws-sdk/protocol-http": "^3.374.0",
     "@aws-sdk/querystring-builder": "^3.374.0",
-    "@aws-sdk/types": "^3.577.0",
-    "@smithy/fetch-http-handler": "^3.0.1",
+    "@aws-sdk/types": "^3.667.0",
+    "@smithy/fetch-http-handler": "^3.2.9",
     "browser-image-compression": "^2.0.2",
-    "crypto-hash": "^3.0.0",
-    "filesize": "^10.1.2",
-    "qrcode": "^1.5.3"
+    "crypto-hash": "^3.1.0",
+    "filesize": "^10.1.6",
+    "qrcode": "^1.5.4"
   }
 }

@@ -1,9 +1,8 @@
-import S3UploaderPlugin, { S3UploaderSettings } from "./main";
-import { Modal, App, Notice, Setting, TextComponent } from "obsidian";
+import S3UploaderPlugin, {S3UploaderSettings} from "./main";
+import {App, Modal, Notice, Setting, TextComponent} from "obsidian";
 
 export const exportDataUri = (settings: S3UploaderSettings) => {
-	const data = encodeURIComponent(JSON.stringify(settings));
-	return data;
+	return encodeURIComponent(JSON.stringify(settings));
 };
 
 export interface ProcessQrCodeResultType {
@@ -12,15 +11,15 @@ export interface ProcessQrCodeResultType {
 	result?: S3UploaderSettings;
 }
 
-export const importFromDataUri = (
+export const importFromDataUri = async (
 	plugin: S3UploaderPlugin,
 	inputParams: string
-): ProcessQrCodeResultType => {
+): Promise<ProcessQrCodeResultType> => {
 	let settings = {} as S3UploaderSettings;
 	try {
 		settings = JSON.parse(decodeURIComponent(inputParams));
 		plugin.settings = Object.assign({}, plugin.settings, settings);
-		plugin.saveSettings();
+		await plugin.saveSettings();
 	} catch (e) {
 		return {
 			status: "error",
@@ -77,7 +76,7 @@ export class ImportSettingsModal extends Modal {
 
 	async submitForm() {
 		const { data } = this;
-		const result = importFromDataUri(this.plugin, data);
+		const result = await importFromDataUri(this.plugin, data);
 		if (result.status === "ok") {
 			new Notice("Settings imported successfully");
 			this.close();
