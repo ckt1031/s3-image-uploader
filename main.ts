@@ -24,7 +24,8 @@ import { filesize } from "filesize";
 import imageCompression from "browser-image-compression";
 
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { sha256 } from "crypto-hash";
+import { sha3_256 } from "@noble/hashes/sha3";
+import { bytesToHex } from '@noble/hashes/utils';
 import { ImportSettingsModal, exportDataUri } from "export-import";
 
 // Remember to rename these classes and interfaces!
@@ -240,7 +241,7 @@ export default class S3UploaderPlugin extends Plugin {
 				if (!thisType) return;
 
 				const buf = await file.arrayBuffer();
-				const digest = await sha256(buf);
+				const digest = bytesToHex(sha3_256(new Uint8Array(buf)));
 				const newFileName = `${digest}.${file.name.split(".").pop()}`;
 				const placeholder = `![uploading...](${newFileName})\n`;
 				editor.replaceSelection(placeholder);
