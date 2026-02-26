@@ -25,7 +25,6 @@ import {
 
 import { filesize } from "filesize";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import imageCompression from "browser-image-compression";
 import { minimatch } from "minimatch";
 
 // Remember to rename these classes and interfaces!!
@@ -60,7 +59,6 @@ interface S3UploaderSettings {
 	queryStringValue: string;
 	queryStringKey: string;
 	enableImageCompression: boolean;
-	maxImageCompressionSize: number;
 	imageCompressionQuality: number;
 	maxImageWidthOrHeight: number;
 	ignorePattern: string;
@@ -89,7 +87,6 @@ const DEFAULT_SETTINGS: S3UploaderSettings = {
 	queryStringValue: "",
 	queryStringKey: "",
 	enableImageCompression: false,
-	maxImageCompressionSize: 1,
 	imageCompressionQuality: 0.7,
 	maxImageWidthOrHeight: 4096,
 	ignorePattern: "",
@@ -235,21 +232,33 @@ export default class S3UploaderPlugin extends Plugin {
 		return urlString;
 	}
 
-	async compressImage(file: File): Promise<ArrayBuffer> {
-		const compressedFile = await imageCompression(file, {
-			useWebWorker: false,
-			maxWidthOrHeight: this.settings.maxImageWidthOrHeight,
-			maxSizeMB: this.settings.maxImageCompressionSize,
-			initialQuality: this.settings.imageCompressionQuality,
-		});
+	async compressImage(
+		file: File,
+	): Promise<{ buffer: ArrayBuffer; mimeType: string }> {
+		// Animated GIFs can't be composited via Canvas; pass through unchanged.
+		if (file.type === "image/gif") {
+			return { buffer: await file.arrayBuffer(), mimeType: file.type };
+		}
 
-		const fileBuffer = await compressedFile.arrayBuffer();
-		const originalSize = filesize(file.size); // Input file size
-		const newSize = filesize(compressedFile.size);
+		const { canvas, ctx, outWidth, outHeight } = await renderToCanvas(
+			file,
+			this.settings.maxImageWidthOrHeight,
+		);
 
-		new Notice(`Image compressed from ${originalSize} to ${newSize}`);
+		// Opaque PNGs compress far better as JPEG; transparent ones stay PNG.
+		let outputType = file.type;
+		if (file.type === "image/png") {
+			outputType = hasPngAlpha(ctx, outWidth, outHeight)
+				? "image/png"
+				: "image/jpeg";
+		}
 
-		return fileBuffer;
+		const blob = await canvasToBlob(canvas, outputType, this.settings.imageCompressionQuality);
+
+		new Notice(
+			`Image compressed from ${filesize(file.size)} to ${filesize(blob.size)}`,
+		);
+		return { buffer: await blob.arrayBuffer(), mimeType: outputType };
 	}
 
 	async pasteHandler(
@@ -336,7 +345,7 @@ export default class S3UploaderPlugin extends Plugin {
 				// Process the file
 				let buf = await file.arrayBuffer();
 				const digest = await generateFileHash(new Uint8Array(buf));
-				const newFileName = `${digest}.${file.name.split(".").pop()}`;
+				let newFileName = `${digest}.${file.name.split(".").pop()}`;
 
 				// Determine folder
 				let folder = "";
@@ -364,7 +373,7 @@ export default class S3UploaderPlugin extends Plugin {
 						noteFile.basename.replace(/ /g, "-"),
 					);
 
-				const key = folder ? `${folder}/${newFileName}` : newFileName;
+				let key = folder ? `${folder}/${newFileName}` : newFileName;
 
 				try {
 					// Upload the file
@@ -375,10 +384,22 @@ export default class S3UploaderPlugin extends Plugin {
 						thisType === "image" &&
 						this.settings.enableImageCompression
 					) {
-						buf = await this.compressImage(file);
-						file = new File([buf], newFileName, {
-							type: file.type,
-						});
+						const { buffer: compressedBuf, mimeType: newMimeType } =
+							await this.compressImage(file);
+						buf = compressedBuf;
+						// If the format changed (e.g. opaque PNG → JPEG), update
+						// the filename and S3 key so the extension stays correct.
+						if (newMimeType !== file.type) {
+							const newExt =
+								newMimeType === "image/jpeg"
+									? "jpg"
+									: newMimeType.split("/")[1];
+							newFileName = `${digest}.${newExt}`;
+							key = folder
+								? `${folder}/${newFileName}`
+								: newFileName;
+						}
+						file = new File([buf], newFileName, { type: newMimeType });
 					}
 
 					if (!localUpload) {
@@ -572,7 +593,7 @@ export default class S3UploaderPlugin extends Plugin {
 		);
 	}
 
-	onunload() {}
+	onunload() { }
 
 	async loadSettings() {
 		this.settings = Object.assign(
@@ -930,33 +951,6 @@ class S3UploaderSettingTab extends PluginSettingTab {
 					});
 			});
 
-		// Always create the compression settings, but control visibility
-		this.compressionSizeSettings = new Setting(containerEl)
-			.setName("Max Image Size")
-			.setDesc(
-				"Maximum size of the image after compression in MB. Default is 1MB.",
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("1")
-					.setValue(
-						this.plugin.settings.maxImageCompressionSize.toString(),
-					)
-					.onChange(async (value) => {
-						// It must be a number, it must be greater than 0
-						const newValue = parseFloat(value);
-						if (isNaN(newValue) || newValue <= 0) {
-							new Notice(
-								"Max Image Compression Size must be a number greater than 0",
-							);
-							return;
-						}
-
-						this.plugin.settings.maxImageCompressionSize = newValue;
-						await this.plugin.saveSettings();
-					}),
-			);
-
 		this.compressionQualitySettings = new Setting(containerEl)
 			.setName("Image Compression Quality")
 			.setDesc(
@@ -1126,9 +1120,8 @@ class ObsHttpHandler extends FetchHttpHandler {
 		}
 
 		const { port, method } = request;
-		const url = `${request.protocol}//${request.hostname}${
-			port ? `:${port}` : ""
-		}${path}`;
+		const url = `${request.protocol}//${request.hostname}${port ? `:${port}` : ""
+			}${path}`;
 		const body =
 			method === "GET" || method === "HEAD" ? undefined : request.body;
 
@@ -1201,6 +1194,80 @@ class ObsHttpHandler extends FetchHttpHandler {
 const bufferToArrayBuffer = (b: Buffer | Uint8Array | ArrayBufferView) => {
 	return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 };
+
+////////////////////////////////////////////////////////////////////////////////
+// Canvas image-compression helpers
+////////////////////////////////////////////////////////////////////////////////
+
+/** Decode `file` into a canvas scaled to fit within `maxDim` on either axis. */
+async function renderToCanvas(
+	file: File,
+	maxDim: number,
+): Promise<{
+	canvas: HTMLCanvasElement;
+	ctx: CanvasRenderingContext2D;
+	outWidth: number;
+	outHeight: number;
+}> {
+	const bitmap = await createImageBitmap(file);
+	const { width, height } = bitmap;
+
+	const scale = Math.min(1, maxDim / Math.max(width, height));
+	const outWidth = Math.max(1, Math.round(width * scale));
+	const outHeight = Math.max(1, Math.round(height * scale));
+
+	const canvas = document.createElement("canvas");
+	canvas.width = outWidth;
+	canvas.height = outHeight;
+
+	const ctx = canvas.getContext("2d");
+	if (!ctx) throw new Error("Could not get canvas 2D context");
+
+	ctx.imageSmoothingEnabled = true;
+	ctx.imageSmoothingQuality = "high";
+	ctx.drawImage(bitmap, 0, 0, outWidth, outHeight);
+	bitmap.close();
+
+	return { canvas, ctx, outWidth, outHeight };
+}
+
+/**
+ * Sample up to a 512×512 region of the already-drawn canvas to detect
+ * whether any pixel has a non-opaque alpha channel.
+ */
+function hasPngAlpha(
+	ctx: CanvasRenderingContext2D,
+	outWidth: number,
+	outHeight: number,
+): boolean {
+	const { data } = ctx.getImageData(
+		0,
+		0,
+		Math.min(outWidth, 512),
+		Math.min(outHeight, 512),
+	);
+	for (let i = 3; i < data.length; i += 4) {
+		if (data[i] < 255) return true;
+	}
+	return false;
+}
+
+function canvasToBlob(
+	canvas: HTMLCanvasElement,
+	type: string,
+	quality?: number,
+): Promise<Blob> {
+	return new Promise((resolve, reject) =>
+		canvas.toBlob(
+			(blob) =>
+				blob
+					? resolve(blob)
+					: reject(new Error("Canvas toBlob failed")),
+			type,
+			quality,
+		),
+	);
+}
 
 async function generateFileHash(data: Uint8Array): Promise<string> {
 	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
