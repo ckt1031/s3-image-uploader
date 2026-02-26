@@ -248,7 +248,7 @@ export default class S3UploaderPlugin extends Plugin {
 		// Opaque PNGs compress far better as JPEG; transparent ones stay PNG.
 		let outputType = file.type;
 		if (file.type === "image/png") {
-			outputType = hasPngAlpha(ctx, outWidth, outHeight)
+			outputType = hasPngAlpha(ctx, canvas)
 				? "image/png"
 				: "image/jpeg";
 		}
@@ -1232,19 +1232,20 @@ async function renderToCanvas(
 }
 
 /**
- * Sample up to a 512×512 region of the already-drawn canvas to detect
- * whether any pixel has a non-opaque alpha channel.
+ * Check if the canvas has any transparent pixels
  */
 function hasPngAlpha(
 	ctx: CanvasRenderingContext2D,
-	outWidth: number,
-	outHeight: number,
+	canvas: HTMLCanvasElement,
 ): boolean {
+	/**
+	 * References: https://stackoverflow.com/questions/45122264/how-to-determine-if-image-is-using-transparency-on-javascript
+	 */
 	const { data } = ctx.getImageData(
 		0,
 		0,
-		Math.min(outWidth, 512),
-		Math.min(outHeight, 512),
+		canvas.width,
+		canvas.height,
 	);
 	for (let i = 3; i < data.length; i += 4) {
 		if (data[i] < 255) return true;
