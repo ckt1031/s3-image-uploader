@@ -255,6 +255,14 @@ export default class S3UploaderPlugin extends Plugin {
 
 		const blob = await canvasToBlob(canvas, outputType, this.settings.imageCompressionQuality);
 
+		// If the re-encoded output is larger than the original, keep the original.
+		if (blob.size >= file.size) {
+			new Notice(
+				`Image compression skipped (output ${filesize(blob.size)} ≥ original ${filesize(file.size)})`,
+			);
+			return { buffer: await file.arrayBuffer(), mimeType: file.type };
+		}
+
 		new Notice(
 			`Image compressed from ${filesize(file.size)} to ${filesize(blob.size)}`,
 		);
