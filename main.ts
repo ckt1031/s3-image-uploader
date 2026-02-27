@@ -261,13 +261,17 @@ export default class S3UploaderPlugin extends Plugin {
 			fileType: fileType,
 		});
 
-		const fileBuffer = await compressedFile.arrayBuffer();
+		// Return original file if the compressed file size is larger than the original file size
+		if (compressedFile.size > file.size) {
+			return await file.arrayBuffer();
+		}
+
 		const originalSize = filesize(file.size); // Input file size
 		const newSize = filesize(compressedFile.size);
 
 		new Notice(`Image compressed from ${originalSize} to ${newSize}`);
 
-		return fileBuffer;
+		return await compressedFile.arrayBuffer();
 	}
 
 	async pasteHandler(
