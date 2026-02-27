@@ -235,12 +235,30 @@ export default class S3UploaderPlugin extends Plugin {
 		return urlString;
 	}
 
-	async compressImage(file: File): Promise<ArrayBuffer> {
+	// Check if the PNG file has alpha channel
+	// In other words, if the file is a PNG with transparency
+	async hasPngAlpha(file: File): Promise<boolean> {
+		const [, canvas] = await imageCompression.drawFileInCanvas(file);
+		const ctx = canvas.getContext("2d");
+
+		if (!ctx) return false;
+
+		const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+		for (let i = 3; i < data.length; i += 4) {
+			if (data[i] < 255) return true;
+		}
+
+		return false;
+	}
+
+	async compressImage(file: File, fileType: string): Promise<ArrayBuffer> {
 		const compressedFile = await imageCompression(file, {
 			useWebWorker: false,
 			maxWidthOrHeight: this.settings.maxImageWidthOrHeight,
 			maxSizeMB: this.settings.maxImageCompressionSize,
 			initialQuality: this.settings.imageCompressionQuality,
+			fileType: fileType,
 		});
 
 		const fileBuffer = await compressedFile.arrayBuffer();
@@ -336,7 +354,7 @@ export default class S3UploaderPlugin extends Plugin {
 				// Process the file
 				let buf = await file.arrayBuffer();
 				const digest = await generateFileHash(new Uint8Array(buf));
-				const newFileName = `${digest}.${file.name.split(".").pop()}`;
+				let newFileName = `${digest}.${file.name.split(".").pop()}`;
 
 				// Determine folder
 				let folder = "";
@@ -364,8 +382,6 @@ export default class S3UploaderPlugin extends Plugin {
 						noteFile.basename.replace(/ /g, "-"),
 					);
 
-				const key = folder ? `${folder}/${newFileName}` : newFileName;
-
 				try {
 					// Upload the file
 					let url;
@@ -375,11 +391,24 @@ export default class S3UploaderPlugin extends Plugin {
 						thisType === "image" &&
 						this.settings.enableImageCompression
 					) {
-						buf = await this.compressImage(file);
+						// Convert to JPEG from PNG if the file has no transparency
+						let fileType = file.type;
+
+						// Reserve transparency, only convert to JPEG if the file has no transparency
+						if (fileType.startsWith("image/png") && !(await this.hasPngAlpha(file))) {
+							fileType = "image/jpeg";
+
+							// Update the file name to include the JPEG extension
+							newFileName = `${digest}.jpeg`;
+						}
+
+						buf = await this.compressImage(file, fileType);
 						file = new File([buf], newFileName, {
-							type: file.type,
+							type: fileType,
 						});
 					}
+
+					const key = folder ? `${folder}/${newFileName}` : newFileName;
 
 					if (!localUpload) {
 						url = await this.uploadFile(file, key);
@@ -572,7 +601,7 @@ export default class S3UploaderPlugin extends Plugin {
 		);
 	}
 
-	onunload() {}
+	onunload() { }
 
 	async loadSettings() {
 		this.settings = Object.assign(
@@ -1126,9 +1155,8 @@ class ObsHttpHandler extends FetchHttpHandler {
 		}
 
 		const { port, method } = request;
-		const url = `${request.protocol}//${request.hostname}${
-			port ? `:${port}` : ""
-		}${path}`;
+		const url = `${request.protocol}//${request.hostname}${port ? `:${port}` : ""
+			}${path}`;
 		const body =
 			method === "GET" || method === "HEAD" ? undefined : request.body;
 
