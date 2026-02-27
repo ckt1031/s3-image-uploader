@@ -614,7 +614,7 @@ export default class S3UploaderPlugin extends Plugin {
 		);
 	}
 
-	onunload() { }
+	onunload() {}
 
 	async loadSettings() {
 		this.settings = Object.assign(
