@@ -405,7 +405,7 @@ export default class S3UploaderPlugin extends Plugin {
 						const digest = await generateFileHash(new Uint8Array(buf));
 						newFileName = `${digest}.${file.name.split(".").pop()}`;
 
-						// Reserve transparency, only convert to JPEG if the file has no transparency
+						// Preserve transparency, only convert to JPEG if the file has no transparency
 						if (fileType.startsWith("image/png") && !(await this.hasPngAlpha(file))) {
 							fileType = "image/jpeg";
 
