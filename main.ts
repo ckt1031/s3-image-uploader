@@ -238,18 +238,29 @@ export default class S3UploaderPlugin extends Plugin {
 	// Check if the PNG file has alpha channel
 	// In other words, if the file is a PNG with transparency
 	async hasPngAlpha(file: File): Promise<boolean> {
-		const [, canvas] = await imageCompression.drawFileInCanvas(file);
-		const ctx = canvas.getContext("2d");
+		try {
+			const [, canvas] = await imageCompression.drawFileInCanvas(file);
 
-		if (!ctx) return false;
+			// If we cannot obtain a valid canvas, conservatively assume the PNG has alpha
+			if (!canvas) {
+				return true;
+			}
 
-		const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+			const ctx = canvas.getContext("2d");
 
-		for (let i = 3; i < data.length; i += 4) {
-			if (data[i] < 255) return true;
+			if (!ctx) return false;
+
+			const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+			for (let i = 3; i < data.length; i += 4) {
+				if (data[i] < 255) return true;
+			}
+
+			return false;
+		} catch (e) {
+			// On any error, assume the PNG has alpha to preserve the original image format
+			return true;
 		}
-
-		return false;
 	}
 
 	async compressImage(file: File, fileType: string): Promise<ArrayBuffer> {
