@@ -1168,8 +1168,7 @@ class ObsHttpHandler extends FetchHttpHandler {
 		}
 
 		const { port, method } = request;
-		const url = `${request.protocol}//${request.hostname}${port ? `:${port}` : ""
-			}${path}`;
+		const url = `${request.protocol}//${request.hostname}${port ? `:${port}` : ""}${path}`;
 		const body =
 			method === "GET" || method === "HEAD" ? undefined : request.body;
 
