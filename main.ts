@@ -357,8 +357,6 @@ export default class S3UploaderPlugin extends Plugin {
 
 				// Process the file
 				let buf = await file.arrayBuffer();
-				const digest = await generateFileHash(new Uint8Array(buf));
-				let newFileName = `${digest}.${file.name.split(".").pop()}`;
 
 				// Determine folder
 				let folder = "";
@@ -386,6 +384,9 @@ export default class S3UploaderPlugin extends Plugin {
 						noteFile.basename.replace(/ /g, "-"),
 					);
 
+
+				let newFileName = "";
+
 				try {
 					// Upload the file
 					let url;
@@ -398,6 +399,10 @@ export default class S3UploaderPlugin extends Plugin {
 						// Convert to JPEG from PNG if the file has no transparency
 						let fileType = file.type;
 
+						buf = await this.compressImage(file, fileType);
+						const digest = await generateFileHash(new Uint8Array(buf));
+						newFileName = `${digest}.${file.name.split(".").pop()}`;
+
 						// Reserve transparency, only convert to JPEG if the file has no transparency
 						if (fileType.startsWith("image/png") && !(await this.hasPngAlpha(file))) {
 							fileType = "image/jpeg";
@@ -406,10 +411,12 @@ export default class S3UploaderPlugin extends Plugin {
 							newFileName = `${digest}.jpeg`;
 						}
 
-						buf = await this.compressImage(file, fileType);
 						file = new File([buf], newFileName, {
 							type: fileType,
 						});
+					} else {
+						const digest = await generateFileHash(new Uint8Array(buf));
+						newFileName = `${digest}.${file.name.split(".").pop()}`;
 					}
 
 					const key = folder ? `${folder}/${newFileName}` : newFileName;
