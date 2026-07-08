@@ -11,8 +11,9 @@
 	"keywords": [],
 	"author": "jvsteiner@gmail.com",
 	"license": "MIT",
-	"devDependencies": {"@types/mime-types": "^3.0.1",
-	"@types/node": "^26.1.1",
+	"devDependencies": {
+		"@types/mime-types": "^3.0.1",
+		"@types/node": "^26.1.1",
 		"@typescript-eslint/eslint-plugin": "5.29.0",
 		"@typescript-eslint/parser": "5.29.0",
 		"browser-resolve": "^2.0.0",
@@ -34,5 +35,6 @@
 		"browser-image-compression": "^2.0.2",
 		"filesize": "^11.0.19",
 		"minimatch": "^10.2.5"
-	}
+	},
+	"packageManager": "npm@11.18.0+sha512.4faecce0be70366d1c67b1012c4adc1246354a6cc45bf589f92003073b05518d547403df1475c542d67a4845e22b4fafcd7cac0af02c7a96cc6814f09eb003fb"
 }
