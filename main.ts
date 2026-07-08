@@ -25,7 +25,7 @@ import {
 
 import { filesize } from "filesize";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import imageCompression from "browser-image-compression";
+import { compressImage as compressImageBuffer, CompressedImage } from "./image";
 import { minimatch } from "minimatch";
 
 // Remember to rename these classes and interfaces!!
@@ -60,9 +60,6 @@ interface S3UploaderSettings {
 	queryStringValue: string;
 	queryStringKey: string;
 	enableImageCompression: boolean;
-	maxImageCompressionSize: number;
-	imageCompressionQuality: number;
-	maxImageWidthOrHeight: number;
 	ignorePattern: string;
 	disableAutoUploadOnCreate: boolean;
 }
@@ -89,9 +86,6 @@ const DEFAULT_SETTINGS: S3UploaderSettings = {
 	queryStringValue: "",
 	queryStringKey: "",
 	enableImageCompression: false,
-	maxImageCompressionSize: 1,
-	imageCompressionQuality: 0.7,
-	maxImageWidthOrHeight: 4096,
 	ignorePattern: "",
 	disableAutoUploadOnCreate: false,
 };
@@ -235,21 +229,14 @@ export default class S3UploaderPlugin extends Plugin {
 		return urlString;
 	}
 
-	async compressImage(file: File): Promise<ArrayBuffer> {
-		const compressedFile = await imageCompression(file, {
-			useWebWorker: false,
-			maxWidthOrHeight: this.settings.maxImageWidthOrHeight,
-			maxSizeMB: this.settings.maxImageCompressionSize,
-			initialQuality: this.settings.imageCompressionQuality,
-		});
+	async compressImage(file: File): Promise<CompressedImage> {
+		const compressed = await compressImageBuffer(file);
 
-		const fileBuffer = await compressedFile.arrayBuffer();
-		const originalSize = filesize(file.size); // Input file size
-		const newSize = filesize(compressedFile.size);
+		new Notice(
+			`Image compressed from ${filesize(file.size)} to ${filesize(compressed.buffer.byteLength)}`,
+		);
 
-		new Notice(`Image compressed from ${originalSize} to ${newSize}`);
-
-		return fileBuffer;
+		return compressed;
 	}
 
 	async pasteHandler(
@@ -335,9 +322,23 @@ export default class S3UploaderPlugin extends Plugin {
 
 				// Process the file
 				let buf = await file.arrayBuffer();
-				const digest = await generateFileHash(new Uint8Array(buf));
-				const newFileName = `${digest}.${file.name.split(".").pop()}`;
+				let extension = file.name.split(".").pop() || "bin";
 
+				// Image compression
+				if (
+					thisType === "image" &&
+					this.settings.enableImageCompression
+				) {
+					const compressed = await this.compressImage(file);
+					buf = compressed.buffer;
+					extension = compressed.extension;
+					file = new File([buf], file.name, {
+						type: compressed.type,
+					});
+				}
+
+				const digest = await generateFileHash(new Uint8Array(buf));
+				const newFileName = `${digest}.${extension}`;
 				// Determine folder
 				let folder = "";
 				if (localUpload) {
@@ -369,17 +370,6 @@ export default class S3UploaderPlugin extends Plugin {
 				try {
 					// Upload the file
 					let url;
-
-					// Image compression
-					if (
-						thisType === "image" &&
-						this.settings.enableImageCompression
-					) {
-						buf = await this.compressImage(file);
-						file = new File([buf], newFileName, {
-							type: file.type,
-						});
-					}
 
 					if (!localUpload) {
 						url = await this.uploadFile(file, key);
@@ -592,33 +582,10 @@ export default class S3UploaderPlugin extends Plugin {
 
 class S3UploaderSettingTab extends PluginSettingTab {
 	plugin: S3UploaderPlugin;
-	// Add properties to store compression setting elements
-	private compressionSizeSettings!: Setting;
-	private compressionQualitySettings!: Setting;
-	private compressionDimensionSettings!: Setting;
 
 	constructor(app: App, plugin: S3UploaderPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
-	}
-
-	/**
-	 * Toggle visibility of compression settings
-	 * @param show Whether to show the compression settings
-	 */
-	private toggleCompressionSettings(show: boolean): void {
-		if (
-			this.compressionSizeSettings &&
-			this.compressionQualitySettings &&
-			this.compressionDimensionSettings
-		) {
-			const displayStyle = show ? "" : "none";
-			this.compressionSizeSettings.settingEl.style.display = displayStyle;
-			this.compressionQualitySettings.settingEl.style.display =
-				displayStyle;
-			this.compressionDimensionSettings.settingEl.style.display =
-				displayStyle;
-		}
 	}
 
 	display(): void {
@@ -927,85 +894,8 @@ class S3UploaderSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.enableImageCompression = value;
 						await this.plugin.saveSettings();
-
-						// Show or hide compression settings based on toggle value
-						this.toggleCompressionSettings(value);
 					});
 			});
-
-		// Always create the compression settings, but control visibility
-		this.compressionSizeSettings = new Setting(containerEl)
-			.setName("Max Image Size")
-			.setDesc(
-				"Maximum size of the image after compression in MB. Default is 1MB.",
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("1")
-					.setValue(
-						this.plugin.settings.maxImageCompressionSize.toString(),
-					)
-					.onChange(async (value) => {
-						// It must be a number, it must be greater than 0
-						const newValue = parseFloat(value);
-						if (isNaN(newValue) || newValue <= 0) {
-							new Notice(
-								"Max Image Compression Size must be a number greater than 0",
-							);
-							return;
-						}
-
-						this.plugin.settings.maxImageCompressionSize = newValue;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		this.compressionQualitySettings = new Setting(containerEl)
-			.setName("Image Compression Quality")
-			.setDesc(
-				"Maximum quality of the image after compression. Default is 0.7.",
-			)
-			.addSlider((slider) => {
-				slider.setDynamicTooltip();
-				slider.setLimits(0.0, 1.0, 0.05);
-				slider.setValue(this.plugin.settings.imageCompressionQuality);
-				slider.onChange(async (value) => {
-					this.plugin.settings.imageCompressionQuality = value;
-					await this.plugin.saveSettings();
-				});
-			});
-
-		this.compressionDimensionSettings = new Setting(containerEl)
-			.setName("Max Image Width or Height")
-			.setDesc(
-				"Maximum width or height of the image after compression. Default is 4096px.",
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder("4096")
-					.setValue(
-						this.plugin.settings.maxImageWidthOrHeight.toString(),
-					)
-					.onChange(async (value) => {
-						const parsedValue = parseInt(value);
-
-						if (isNaN(parsedValue) || parsedValue <= 0) {
-							new Notice(
-								"Max Image Width or Height must be a number greater than 0",
-							);
-							return;
-						}
-
-						this.plugin.settings.maxImageWidthOrHeight =
-							parsedValue;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		// Set initial visibility based on current settings
-		this.toggleCompressionSettings(
-			this.plugin.settings.enableImageCompression,
-		);
 
 		new Setting(containerEl)
 			.setName("Disable auto-upload on file create")

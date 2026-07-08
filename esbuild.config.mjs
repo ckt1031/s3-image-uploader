@@ -38,6 +38,7 @@ const config = {
 	sourcemap: prod ? false : 'inline',
 	treeShaking: true,
 	outfile: 'main.js',
+	loader: { '.wasm': 'dataurl' },
 };
 
 if (prod) {
