@@ -97,9 +97,9 @@ const DEFAULT_SETTINGS: S3UploaderSettings = {
 };
 
 export default class S3UploaderPlugin extends Plugin {
-	settings: S3UploaderSettings;
-	s3: S3Client;
-	pasteFunction: pasteFunction;
+	settings!: S3UploaderSettings;
+	s3!: S3Client;
+	pasteFunction!: pasteFunction;
 
 	private async replaceText(
 		editor: Editor,
@@ -386,7 +386,7 @@ export default class S3UploaderPlugin extends Plugin {
 					} else {
 						await this.app.vault.adapter.writeBinary(
 							key,
-							new Uint8Array(buf),
+							buf,
 						);
 						url =
 							this.app.vault.adapter instanceof FileSystemAdapter
@@ -396,7 +396,8 @@ export default class S3UploaderPlugin extends Plugin {
 
 					// Generate the markdown
 					return wrapFileDependingOnType(url, thisType, "");
-				} catch (error) {
+				} catch (err) {
+					const error = err as Error;
 					console.error(error);
 					return `Error uploading file: ${error.message}`;
 				}
@@ -428,7 +429,8 @@ export default class S3UploaderPlugin extends Plugin {
 
 					new Notice("All files uploaded successfully");
 				}
-			} catch (error) {
+			} catch (err) {
+				const error = err as Error;
 				console.error("Error during upload or insertion:", error);
 				new Notice(`Error: ${error.message}`);
 			}
@@ -565,7 +567,8 @@ export default class S3UploaderPlugin extends Plugin {
 					}
 
 					await this.app.vault.delete(file);
-				} catch (error) {
+				} catch (err) {
+					const error = err as Error;
 					new Notice(`Error processing file: ${error.message}`);
 				}
 			}),
@@ -590,9 +593,9 @@ export default class S3UploaderPlugin extends Plugin {
 class S3UploaderSettingTab extends PluginSettingTab {
 	plugin: S3UploaderPlugin;
 	// Add properties to store compression setting elements
-	private compressionSizeSettings: Setting;
-	private compressionQualitySettings: Setting;
-	private compressionDimensionSettings: Setting;
+	private compressionSizeSettings!: Setting;
+	private compressionQualitySettings!: Setting;
+	private compressionDimensionSettings!: Setting;
 
 	constructor(app: App, plugin: S3UploaderPlugin) {
 		super(app, plugin);
@@ -1148,7 +1151,7 @@ class ObsHttpHandler extends FetchHttpHandler {
 
 		let transformedBody: string | ArrayBuffer | undefined = body;
 		if (ArrayBuffer.isView(body)) {
-			transformedBody = bufferToArrayBuffer(body);
+			transformedBody = bufferToArrayBuffer(body) as ArrayBuffer;
 		}
 
 		const param: RequestUrlParam = {
@@ -1203,7 +1206,7 @@ const bufferToArrayBuffer = (b: Buffer | Uint8Array | ArrayBufferView) => {
 };
 
 async function generateFileHash(data: Uint8Array): Promise<string> {
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+	const hashBuffer = await crypto.subtle.digest("SHA-256", data as BufferSource);
 	const hashArray = Array.from(new Uint8Array(hashBuffer));
 	const hashHex = hashArray
 		.map((b) => b.toString(16).padStart(2, "0"))
