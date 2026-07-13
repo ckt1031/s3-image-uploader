@@ -27,7 +27,7 @@ export async function compressImage(file: File): Promise<CompressedImage> {
 	if (hasTransparency(imageData)) {
 		return {
 			buffer: await optimisePNG(imageData, {
-				level: 2,
+				level: 3,
 				optimiseAlpha: true,
 			}),
 			type: "image/png",
@@ -39,6 +39,9 @@ export async function compressImage(file: File): Promise<CompressedImage> {
 		buffer: await encodeJPEG(imageData, {
 			quality: 75,
 			trellis_multipass: true,
+			optimize_coding: true,
+			auto_subsample: true,
+			quant_table: 3,
 		}),
 		type: "image/jpeg",
 		extension: "jpg",
