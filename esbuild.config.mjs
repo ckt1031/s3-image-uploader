@@ -39,6 +39,7 @@ const config = {
 	treeShaking: true,
 	outfile: 'main.js',
 	loader: { '.wasm': 'dataurl' },
+	minify: prod,
 };
 
 if (prod) {
