@@ -961,7 +961,7 @@ const wrapFileDependingOnType = (
 	const srcPrefix = localBase ? "file://" + localBase + "/" : "";
 
 	if (type === "image") {
-		return `![image](${location})`;
+		return `![](${location})`;
 	} else if (type === "video") {
 		return `<video src="${srcPrefix}${location}" controls />`;
 	} else if (type === "audio") {
