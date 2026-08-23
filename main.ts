@@ -5,8 +5,6 @@ import {
 	Plugin,
 	PluginSettingTab,
 	Setting,
-	TextComponent,
-	setIcon,
 	FileSystemAdapter,
 	RequestUrlParam,
 	requestUrl,
@@ -31,6 +29,12 @@ import {
 	isSupportedImageFile,
 } from "./image-file-types";
 import { minimatch } from "minimatch";
+import {
+	addS3SecretSettings,
+	getS3Credentials,
+	migrateS3Secrets,
+	type S3SecretReferences,
+} from "./secret-storage";
 
 // Remember to rename these classes and interfaces!!
 
@@ -42,9 +46,7 @@ interface pasteFunction {
 	): void;
 }
 
-interface S3UploaderSettings {
-	accessKey: string;
-	secretKey: string;
+interface S3UploaderSettings extends S3SecretReferences {
 	region: string;
 	bucket: string;
 	folder: string;
@@ -69,8 +71,8 @@ interface S3UploaderSettings {
 }
 
 const DEFAULT_SETTINGS: S3UploaderSettings = {
-	accessKey: "",
-	secretKey: "",
+	accessKeySecretId: "",
+	secretKeySecretId: "",
 	region: "",
 	bucket: "",
 	folder: "",
@@ -96,7 +98,7 @@ const DEFAULT_SETTINGS: S3UploaderSettings = {
 
 export default class S3UploaderPlugin extends Plugin {
 	settings!: S3UploaderSettings;
-	s3!: S3Client;
+	s3?: S3Client;
 	pasteFunction!: pasteFunction;
 
 	private async replaceText(
@@ -345,9 +347,9 @@ export default class S3UploaderPlugin extends Plugin {
 					});
 				}
 
-				const digest = await generateFileHash(new Uint8Array(buf));
-				const body = new Uint8Array(buf);
-				const newFileName = `${digest}.${extension}`;
+					const digest = await generateFileHash(new Uint8Array(buf));
+					const body = new Uint8Array(buf);
+					const newFileName = `${digest}.${extension}`;
 				// Determine folder
 				let folder = "";
 				if (localUpload) {
@@ -378,10 +380,10 @@ export default class S3UploaderPlugin extends Plugin {
 
 				try {
 					// Upload the file
-					let url;
+						let url;
 
-					if (!localUpload) {
-						url = await this.uploadFile(file, key, body);
+						if (!localUpload) {
+							url = await this.uploadFile(file, key, body);
 					} else {
 						await this.app.vault.adapter.writeBinary(
 							key,
@@ -437,8 +439,10 @@ export default class S3UploaderPlugin extends Plugin {
 	}
 
 	createS3Client(): void {
-		// Don't create S3 client if region is not configured
-		if (!this.settings.region) {
+		// Don't create S3 client without a region or credentials
+		const credentials = getS3Credentials(this.app, this.settings);
+		if (!this.settings.region || !credentials) {
+			this.s3 = undefined;
 			return;
 		}
 
@@ -454,11 +458,7 @@ export default class S3UploaderPlugin extends Plugin {
 		if (this.settings.bypassCors) {
 			this.s3 = new S3Client({
 				region: this.settings.region,
-				credentials: {
-					// clientConfig: { region: this.settings.region },
-					accessKeyId: this.settings.accessKey,
-					secretAccessKey: this.settings.secretKey,
-				},
+				credentials,
 				endpoint: apiEndpoint,
 				forcePathStyle: this.settings.forcePathStyle,
 				requestHandler: new ObsHttpHandler({ keepAlive: false }),
@@ -466,11 +466,7 @@ export default class S3UploaderPlugin extends Plugin {
 		} else {
 			this.s3 = new S3Client({
 				region: this.settings.region,
-				credentials: {
-					// clientConfig: { region: this.settings.region },
-					accessKeyId: this.settings.accessKey,
-					secretAccessKey: this.settings.secretKey,
-				},
+				credentials,
 				endpoint: apiEndpoint,
 				forcePathStyle: this.settings.forcePathStyle,
 				requestHandler: new ObsHttpHandler({ keepAlive: false }),
@@ -587,11 +583,11 @@ export default class S3UploaderPlugin extends Plugin {
 	onunload() {}
 
 	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData(),
-		);
+		const migration = migrateS3Secrets(this.app, await this.loadData());
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, migration.data);
+		if (migration.migrated) {
+			await this.saveSettings();
+		}
 	}
 
 	async saveSettings() {
@@ -628,33 +624,16 @@ class S3UploaderSettingTab extends PluginSettingTab {
 		coffeeImg.height = 45;
 		containerEl.createEl("br");
 
-		new Setting(containerEl)
-			.setName("AWS Access Key ID")
-			.setDesc("AWS access key ID for a user with S3 access.")
-			.addText((text) => {
-				wrapTextWithPasswordHide(text);
-				text.setPlaceholder("access key")
-					.setValue(this.plugin.settings.accessKey)
-					.onChange(async (value) => {
-						this.plugin.settings.accessKey = value.trim();
-						this.plugin.createS3Client();
-						await this.plugin.saveSettings();
-					});
-			});
-
-		new Setting(containerEl)
-			.setName("AWS Secret Key")
-			.setDesc("AWS secret key for that user.")
-			.addText((text) => {
-				wrapTextWithPasswordHide(text);
-				text.setPlaceholder("secret key")
-					.setValue(this.plugin.settings.secretKey)
-					.onChange(async (value) => {
-						this.plugin.settings.secretKey = value.trim();
-						this.plugin.createS3Client();
-						await this.plugin.saveSettings();
-					});
-			});
+		addS3SecretSettings(
+			this.app,
+			containerEl,
+			this.plugin.settings,
+			async (key, value) => {
+				this.plugin.settings[key] = value;
+				this.plugin.createS3Client();
+				await this.plugin.saveSettings();
+			},
+		);
 
 		new Setting(containerEl)
 			.setName("Region")
@@ -946,31 +925,6 @@ class S3UploaderSettingTab extends PluginSettingTab {
 			);
 	}
 }
-
-const wrapTextWithPasswordHide = (text: TextComponent) => {
-	const hider = text.inputEl.insertAdjacentElement(
-		"beforebegin",
-		createSpan(),
-	);
-	if (!hider) {
-		return;
-	}
-	setIcon(hider as HTMLElement, "eye-off");
-
-	hider.addEventListener("click", () => {
-		const isText = text.inputEl.getAttribute("type") === "text";
-		if (isText) {
-			setIcon(hider as HTMLElement, "eye-off");
-			text.inputEl.setAttribute("type", "password");
-		} else {
-			setIcon(hider as HTMLElement, "eye");
-			text.inputEl.setAttribute("type", "text");
-		}
-		text.inputEl.focus();
-	});
-	text.inputEl.setAttribute("type", "password");
-	return text;
-};
 
 const wrapFileDependingOnType = (
 	location: string,

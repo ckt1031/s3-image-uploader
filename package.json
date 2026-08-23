@@ -20,7 +20,7 @@
 		"builtin-modules": "5.3.0",
 		"detective": "^5.2.1",
 		"esbuild": "0.28.1",
-		"obsidian": "latest",
+		"obsidian": "^1.13.1",
 		"process": "^0.11.10",
 		"tslib": "2.8.1",
 		"typescript": "6.0.3"
