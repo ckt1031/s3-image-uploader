@@ -26,6 +26,10 @@ import {
 import { filesize } from "filesize";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { compressImage as compressImageBuffer, CompressedImage } from "./image";
+import {
+	IMAGE_FILE_ACCEPT,
+	isSupportedImageFile,
+} from "./image-file-types";
 import { minimatch } from "minimatch";
 
 // Remember to rename these classes and interfaces!!
@@ -485,9 +489,19 @@ export default class S3UploaderPlugin extends Plugin {
 			editorCallback: (editor) => {
 				const input = document.createElement("input");
 				input.type = "file";
+				input.accept = IMAGE_FILE_ACCEPT;
 				input.oninput = (event) => {
-					if (!event.target) return;
-					this.pasteHandler(event, editor);
+					const file = input.files?.[0];
+					if (!file) return;
+
+					if (!isSupportedImageFile(file)) {
+						new Notice(
+							"Unsupported image format. Please select a JPG, PNG, GIF, or WebP image.",
+						);
+						return;
+					}
+
+					this.pasteHandler(event, editor, file);
 				};
 				input.click();
 				input.remove(); // delete element
