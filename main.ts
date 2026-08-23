@@ -202,7 +202,11 @@ export default class S3UploaderPlugin extends Plugin {
 		return matchesGlobPattern(filePath, this.settings.ignorePattern);
 	}
 
-	async uploadFile(file: File, key: string): Promise<string> {
+	async uploadFile(
+		file: File,
+		key: string,
+		body: Uint8Array,
+	): Promise<string> {
 		// Check if S3 client is initialized
 		if (!this.s3) {
 			throw new Error(
@@ -210,12 +214,11 @@ export default class S3UploaderPlugin extends Plugin {
 			);
 		}
 
-		const buf = await file.arrayBuffer();
 		await this.s3.send(
 			new PutObjectCommand({
 				Bucket: this.settings.bucket,
 				Key: key,
-				Body: new Uint8Array(buf),
+				Body: body,
 				ContentType: file.type,
 			}),
 		);
@@ -343,6 +346,7 @@ export default class S3UploaderPlugin extends Plugin {
 				}
 
 				const digest = await generateFileHash(new Uint8Array(buf));
+				const body = new Uint8Array(buf);
 				const newFileName = `${digest}.${extension}`;
 				// Determine folder
 				let folder = "";
@@ -377,7 +381,7 @@ export default class S3UploaderPlugin extends Plugin {
 					let url;
 
 					if (!localUpload) {
-						url = await this.uploadFile(file, key);
+						url = await this.uploadFile(file, key, body);
 					} else {
 						await this.app.vault.adapter.writeBinary(
 							key,
