@@ -1,6 +1,6 @@
 {
 	"name": "s3-image-uploader",
-	"version": "0.2.47",
+	"version": "1.1.0",
 	"description": "This is an image uploading plugin for Obsidian (https://obsidian.md)",
 	"main": "main.js",
 	"scripts": {
