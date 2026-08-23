@@ -25,7 +25,7 @@ import {
 
 import { filesize } from "filesize";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { compressImage as compressImageBuffer, CompressedImage } from "./image";
+import type { CompressedImage } from "./image";
 import {
 	IMAGE_FILE_ACCEPT,
 	isSupportedImageFile,
@@ -234,7 +234,8 @@ export default class S3UploaderPlugin extends Plugin {
 	}
 
 	async compressImage(file: File): Promise<CompressedImage> {
-		const compressed = await compressImageBuffer(file);
+		const { compressImage } = await import("./image");
+		const compressed = await compressImage(file);
 
 		new Notice(
 			`Image compressed from ${filesize(file.size)} to ${filesize(compressed.buffer.byteLength)}`,
