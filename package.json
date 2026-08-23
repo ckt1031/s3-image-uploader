@@ -13,7 +13,7 @@
 	"license": "MIT",
 	"devDependencies": {
 		"@types/mime-types": "^3.0.1",
-		"@types/node": "^26.1.1",
+		"@types/node": "^26.2.0",
 		"@typescript-eslint/eslint-plugin": "5.29.0",
 		"@typescript-eslint/parser": "5.29.0",
 		"browser-resolve": "^2.0.0",
@@ -26,16 +26,19 @@
 		"typescript": "6.0.3"
 	},
 	"dependencies": {
-		"@aws-sdk/client-s3": "3.1081.0",
+		"@aws-sdk/client-s3": "3.1116.0",
 		"@aws-sdk/fetch-http-handler": "^3.374.0",
 		"@aws-sdk/protocol-http": "^3.374.0",
 		"@aws-sdk/querystring-builder": "^3.374.0",
-		"@aws-sdk/types": "^3.973.15",
+		"@aws-sdk/types": "^3.974.5",
 		"@jsquash/jpeg": "^1.6.0",
 		"@jsquash/oxipng": "^2.3.0",
-		"@smithy/fetch-http-handler": "^5.6.3",
-		"filesize": "^11.0.19",
-		"minimatch": "^10.2.5"
+		"@smithy/fetch-http-handler": "^5.7.2",
+		"filesize": "^11.0.22",
+		"minimatch": "^10.2.6"
 	},
-	"packageManager": "npm@11.18.0+sha512.4faecce0be70366d1c67b1012c4adc1246354a6cc45bf589f92003073b05518d547403df1475c542d67a4845e22b4fafcd7cac0af02c7a96cc6814f09eb003fb"
+	"packageManager": "npm@11.18.0+sha512.4faecce0be70366d1c67b1012c4adc1246354a6cc45bf589f92003073b05518d547403df1475c542d67a4845e22b4fafcd7cac0af02c7a96cc6814f09eb003fb",
+	"allowScripts": {
+		"esbuild@0.28.1": true
+	}
 }
